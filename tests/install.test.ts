@@ -51,7 +51,8 @@ function computer({ node = "real" }: { node?: "real" | "old" | "none" } = {}) {
   const person = join(dir, `person-${++people}`);
   const tools = join(person, "tools");
   mkdirSync(tools, { recursive: true });
-  for (const name of ["mkdir", "ln", "cat", "cp", "chmod"]) symlinkSync(system(name), join(tools, name));
+  for (const name of ["mkdir", "ln", "cat", "cp", "chmod", "sed", "sort", "tail"])
+    symlinkSync(system(name), join(tools, name));
   const called = join(person, "called");
   executable(
     join(tools, "git"),
@@ -204,7 +205,9 @@ test("running it again updates and doesn't set anything up over what's there", (
   assert.equal(readFileSync(join(it.hub, "rules.json"), "utf8"), "my rules");
   assert.equal(readFileSync(join(it.hub, "config.json"), "utf8"), config);
   assert.equal(readlinkSync(join(it.local, "agent-autoloop")), it.program);
+  // This stand-in lists no releases. What happens with some is in releases.test.ts, with the real git.
   assert.deepEqual(readFileSync(it.called, "utf8").trim().split("\n"), [
+    "git ls-remote --refs --tags https://github.com/KKKKhazix/agent-autoloop.git v*",
     `git -C ${join(it.hub, "app")} pull --ff-only --quiet`,
   ]);
 

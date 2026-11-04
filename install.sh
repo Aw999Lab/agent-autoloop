@@ -27,7 +27,21 @@ node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 24 ? 0 : 1)
 
 mkdir -p -m 700 "$ROOT"
 chmod 700 "$ROOT"
-if [ -d "$APP/.git" ]; then git -C "$APP" pull --ff-only --quiet; else git clone --quiet --depth 1 -- "$REPO" "$APP"; fi
+
+# The newest release, which has passed every check. A repository given by hand is used as it stands.
+release=""
+if [ -z "${AGENT_AUTOLOOP_REPO:-}" ]; then
+  release=$(git ls-remote --refs --tags "$REPO" 'v*' | sed -n 's#.*refs/tags/\(v[0-9]*\.[0-9]*\.[0-9]*\)$#\1#p' |
+    sort -t. -k1.2,1n -k2,2n -k3,3n | tail -n 1)
+fi
+if [ ! -d "$APP/.git" ]; then
+  git clone --quiet --depth 1 ${release:+--branch "$release"} -- "$REPO" "$APP"
+elif [ -n "$release" ]; then
+  git -C "$APP" fetch --quiet --depth 1 "$REPO" "refs/tags/$release:refs/tags/$release"
+  git -C "$APP" checkout --quiet --detach "$release"
+else
+  git -C "$APP" pull --ff-only --quiet
+fi
 
 # Only a folder that's on PATH makes `agent-autoloop` work, and an agent-autoloop that isn't this one is someone else's to keep.
 place_link() {
