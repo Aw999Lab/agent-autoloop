@@ -30,7 +30,7 @@ export default function ({ headers, body, secret }) {
 );
 process.env.AGENT_AUTOLOOP_SECRET_HOOKS = "hook-secret";
 const { serve } = await import("../host/http.ts");
-const { addKey } = await import("../host/runtime.ts");
+const { addKey, createCard } = await import("../host/runtime.ts");
 const { all, one } = await import("../host/runtime.ts");
 
 const keys = {
@@ -323,6 +323,26 @@ test("a card's link is a plain page: it shows that card as words, runs nothing, 
   assert.equal((await form(path, "choice=0")).status, 303);
   assert.equal(stored(id).choice, 1, "only the first press counts");
   assert.equal((await call(`${path}.json`)).status, 404);
+});
+
+test("a card's link lasts a week: after that it neither answers nor shows the card", async () => {
+  const days = (count: number) => Date.now() - count * 24 * 60 * 60_000;
+  const made = (key: string, at: number) =>
+    createCard({ key, kind: "ask", title: "放了很久的问题", text: "放了很久的内容", options: ["甲", "乙"] }, at).card;
+  const linkOf = (id: number) => `/c/${one<{ token: string }>("SELECT token FROM cards WHERE id = ?", [id])!.token}`;
+
+  const recent = made("link-recent", days(6));
+  assert.equal((await call(linkOf(recent))).status, 200);
+  assert.equal((await form(linkOf(recent), "choice=1")).status, 303);
+  assert.equal(stored(recent).choice, 1);
+
+  const old = made("link-old", days(8));
+  const shown = await call(linkOf(old));
+  assert.equal(shown.status, 401);
+  assert.ok(!shown.text.includes("放了很久"), "what it asked stays off the page");
+  assert.ok(shown.text.includes(`agent-autoloop answer ${old}`), "and it says where to answer instead");
+  assert.equal((await form(linkOf(old), "choice=1")).status, 401);
+  assert.deepEqual([stored(old).state, stored(old).choice], ["open", null]);
 });
 
 test("a card's link takes words of your own, and a notice takes a line of its own", async () => {
