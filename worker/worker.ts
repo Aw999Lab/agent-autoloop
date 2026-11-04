@@ -22,12 +22,14 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { HubError, type Hub } from "../protocol/client.ts";
 import { HOME } from "../host/home.ts";
+import { commandLine, killTree, pidExists, resolveCommand, WINDOWS } from "../host/platform.ts";
 import type { Job } from "../protocol/job.ts";
 import { addUsage, type Notice, type Result } from "../protocol/validate.ts";
 import { adapterFor, type Adapter, type Reading, type Turn, type Usage } from "./agents.ts";
 import { promptFor, readMessage, repairPrompt, resultFrom } from "./contract.ts";
 
 const RUNS = path.join(HOME, "worker", "runs");
+const RUN_TURN = path.join(import.meta.dirname, "run-turn.ts");
 const TIMEOUT_MINUTES = 180;
 /** A reader of the turn's end that doesn't exit is given this long. */
 const GRACE = 30_000;
@@ -104,23 +106,36 @@ const files = (entry: Entry) => ({
 });
 const marker = (entry: Entry) => `agent-autoloop-run:${entry.run}:${entry.attempt}:${entry.turn}`;
 
+/** How long a turn's heartbeat file (Windows) counts as proof of life. */
+const BEAT_FRESH = 20_000;
+const beatOf = (entry: Entry) => `${files(entry).exit}.beat`;
+
+/**
+ * Whether the process with the entry's number is still its turn's, and not one that got the number since. Windows is slow to
+ * say what a process is (a second or more, with this process waiting), so there the wrapper's heartbeat file vouches for it
+ * and the command is only asked for when the heartbeat has gone quiet.
+ */
 function alive(entry: Entry) {
   if (!entry.pid) return false;
+  if (!WINDOWS) return commandLine(entry.pid).includes(marker(entry));
+  if (!pidExists(entry.pid)) return false;
   try {
-    const command = execFileSync("ps", ["-p", String(entry.pid), "-o", "command="], { encoding: "utf8" });
-    return command.includes(marker(entry));
-  } catch {
-    return false;
-  }
+    if (Date.now() - statSync(beatOf(entry)).mtimeMs < BEAT_FRESH) return true;
+  } catch {}
+  return commandLine(entry.pid).includes(marker(entry));
 }
 
 function signal(entry: Entry, name: NodeJS.Signals) {
   try {
-    if (entry.pid) process.kill(-entry.pid, name);
+    // Windows has no signals to send: the wrapper and everything under it end together, and only if it is still ours.
+    if (WINDOWS) {
+      if (alive(entry)) killTree(entry.pid!);
+    } else if (entry.pid) process.kill(-entry.pid, name);
   } catch {}
 }
 
 function groupAlive(entry: Entry) {
+  if (WINDOWS) return alive(entry);
   // The wrapper can die before a child; zombies have already stopped and only their parent can reap them.
   return execFileSync("ps", ["-ax", "-o", "pgid=", "-o", "stat="], { encoding: "utf8" })
     .trim()
@@ -181,7 +196,7 @@ export function createWorker({
     delete entry.why;
     save(entry);
     const { rule, agent } = entry.job;
-    const cwd = rule.cwd.replace(/^~(?=\/)/, homedir());
+    const cwd = rule.cwd.replace(/^~(?=[\\/])/, homedir());
     const turn: Turn = {
       prompt,
       session: entry.session,
@@ -197,6 +212,21 @@ export function createWorker({
     if (!existsSync(cwd)) throw new Error(`在 ${cwd} 启动不了：这个目录不存在`);
     const argv = adapter.command(turn);
     const { out, err, exit } = files(entry);
+    if (WINDOWS) {
+      // No shell and no login shell here: run-turn.ts does the shell's part, and the agent gets this program's PATH.
+      writeFileSync(beatOf(entry), "");
+      const child = spawn(
+        process.execPath,
+        ["--disable-warning=ExperimentalWarning", RUN_TURN, marker(entry), out, err, exit, ...argv],
+        { cwd, env: agentEnvironment(entry), detached: true, windowsHide: true, stdio: "ignore" },
+      );
+      child.on("error", (error) => log(`run ${entry.run}: ${error}`));
+      child.unref();
+      entry.pid = child.pid;
+      save(entry);
+      log(`run ${entry.run} (${rule.name}) turn ${entry.turn} started, pid ${child.pid}`);
+      return;
+    }
     // Output and the exit code go through the shell, so they land in their files even if this program has gone by then.
     const script = [
       "out=$1",
@@ -427,13 +457,9 @@ export function createWorker({
     tries += 1;
     const minutes = Math.floor((moment - unreachableSince) / 60_000);
     const text = `${name} 连不上中台已经 ${minutes} 分钟了，派给它的活暂时没人接；它还在一直重试。`;
-    const [program, ...args] = unreachable;
     try {
-      execFileSync(
-        program,
-        args.map((part) => part.replaceAll("{text}", text)),
-        { timeout: 60_000, stdio: "ignore" },
-      );
+      const [program, ...args] = resolveCommand(unreachable.map((part) => part.replaceAll("{text}", text)));
+      execFileSync(program, args, { timeout: 60_000, stdio: "ignore", windowsHide: true });
       told = true;
     } catch (error) {
       log(`couldn't tell anyone the hub is gone: ${error}`);

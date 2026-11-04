@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { resolveCommand } from "../../host/platform.ts";
 import type { Turn } from "../../worker/agents.ts";
 
 function resolved(file: string): string {
@@ -16,7 +17,7 @@ export function permission(turn: Pick<Turn, "access" | "cwd">, params: any) {
   const inside = (location: any) => {
     if (typeof location.path !== "string" || !isAbsolute(location.path)) return false;
     const path = relative(realpathSync(turn.cwd), resolved(location.path));
-    return path !== ".." && !path.startsWith("../") && !isAbsolute(path);
+    return path !== ".." && !path.startsWith("../") && !path.startsWith("..\\") && !isAbsolute(path);
   };
   const editsInside =
     turn.access === "edit" && tool.kind === "edit" && tool.locations?.length > 0 && tool.locations.every(inside);
@@ -27,7 +28,8 @@ export function permission(turn: Pick<Turn, "access" | "cwd">, params: any) {
 
 export async function bridge(turn: Turn) {
   if (!turn.command?.length) throw new Error("ACP 要在 command 写启动命令");
-  const child = spawn(turn.command[0], turn.command.slice(1), { cwd: turn.cwd, stdio: ["pipe", "pipe", "inherit"] });
+  const [program, ...args] = resolveCommand(turn.command);
+  const child = spawn(program, args, { cwd: turn.cwd, stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
   const pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   let next = 0;
   let session = "";

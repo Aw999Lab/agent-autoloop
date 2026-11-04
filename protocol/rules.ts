@@ -71,7 +71,12 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
     ["name", isText, NOT_EMPTY],
     ["when", isObject, "要是一个对象"],
     ["to", isKeyOf(rules.agents), `不是已登记的 Agent：${isObject(rule) ? rule.to : ""}`],
-    ["cwd", (value) => typeof value === "string" && /^(~\/|\/)/.test(value), "要是以 ~/ 或 / 开头的目录"],
+    // The folder is on the worker's machine, which may be a Windows one: C:\ and ~\ are folders there.
+    [
+      "cwd",
+      (value) => typeof value === "string" && /^(~[\\/]|\/|[A-Za-z]:[\\/])/.test(value),
+      "要是以 ~/、/ 或盘符（如 C:\\）开头的目录",
+    ],
     ["skill", isText, NOT_EMPTY, true],
     ["prompt", isText, NOT_EMPTY, true],
     ["group", isText, NOT_EMPTY, true],

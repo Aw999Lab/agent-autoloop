@@ -1,6 +1,7 @@
 // Codex: the user's own, installed and signed in by them. A run is a `codex exec` in the background; its thread is kept
 // on disk, so a retry or an answer can go on in it, and the link opens it in the app.
 import { execFileSync } from "node:child_process";
+import { resolveCommand } from "../../host/platform.ts";
 import { findProgram, tail, type Adapter } from "../../worker/agents.ts";
 
 const SANDBOX = { read: "read-only", edit: "workspace-write", full: "danger-full-access" };
@@ -66,11 +67,13 @@ export default {
   link: (session) => `codex://threads/${session}`,
   check() {
     try {
-      execFileSync(
-        findProgram("codex", () => IN_THE_APP),
-        ["login", "status"],
-        { encoding: "utf8", timeout: 20_000, stdio: ["ignore", "pipe", "pipe"] },
-      );
+      const [program, ...args] = resolveCommand([findProgram("codex", () => IN_THE_APP), "login", "status"]);
+      execFileSync(program, args, {
+        encoding: "utf8",
+        timeout: 20_000,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
       return null;
     } catch (error) {
       return `Codex 没有登录或用不了：运行 codex login（${(error as Error).message.split("\n")[0]}）`;

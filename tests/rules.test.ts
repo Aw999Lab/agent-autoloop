@@ -72,6 +72,17 @@ test("a mistake says which rule and what is wrong", () => {
   problem((r) => {
     r.rules[0].cwd = "relative/path";
   }, /规则「意见」.*cwd/);
+  for (const cwd of ["relative\\path", "C:", "C:relative", "~user/x"]) {
+    problem((r) => {
+      r.rules[0].cwd = cwd;
+    }, /规则「意见」.*cwd/);
+  }
+  // A worker on Windows has its folders there.
+  for (const cwd of ["C:\\Users\\me\\work", "d:/work", "~\\work", "~/work", "/srv/work"]) {
+    const r = good();
+    r.rules[0].cwd = cwd;
+    assert.equal(parseRules(JSON.stringify(r)).rules[0].cwd, cwd);
+  }
   problem((r) => {
     delete r.rules[1].prompt;
   }, /规则「告警」.*skill.*prompt/);

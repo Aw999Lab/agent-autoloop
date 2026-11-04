@@ -2,7 +2,7 @@
 // card does not resume its matter; the example exits successfully after an HTTP error; unrelated scheduled work takes the
 // example's claim. Only curl, jq and shell builtins run.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, after } from "node:test";
@@ -41,7 +41,9 @@ const shell = (file: string, key: string, extra: Record<string, string> = {}) =>
     child.stderr.on("data", (b) => (err += b));
     child.on("close", (code) => resolve({ code, out, err }));
   });
-test("curl and jq examples run against a conforming hub and complete the answer loop", async () => {
+// The examples are for a shell with curl and jq; Windows usually has neither.
+const SHELL_TOOLS = { skip: ["sh", "jq"].some((tool) => spawnSync(tool, ["--version"]).error) && "needs sh and jq" };
+test("curl and jq examples run against a conforming hub and complete the answer loop", SHELL_TOOLS, async () => {
   hub.fixtureClear("schedules");
   hub.tick(Date.now() - 5 * 60_000);
   hub.tick();

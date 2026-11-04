@@ -11,6 +11,11 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+
+// The stand-in gh runs the watcher's own jq filter, so these two need jq and sh on PATH.
+const NEEDS_JQ = {
+  skip: spawnSync("jq", ["--version"], { stdio: "ignore" }).status !== 0 && "jq is not installed",
+};
 import { readMessage, resultFrom } from "../worker/contract.ts";
 
 const ROOT = join(import.meta.dirname, "..");
@@ -168,7 +173,7 @@ function watch(args: string[]) {
   return { said: done.stdout, asked: readFileSync(join(dir, "log"), "utf8"), issues };
 }
 
-test("github-issues: what the watcher prints goes through the worker whole, and the rules let it in", () => {
+test("github-issues: what the watcher prints goes through the worker whole, and the rules let it in", NEEDS_JQ, () => {
   const { said, issues } = watch(["owner/repo"]);
   const { result, problem } = resultFrom(readMessage(said), {});
   assert.equal(problem, undefined);
@@ -191,9 +196,13 @@ test("github-issues: what the watcher prints goes through the worker whole, and 
   assert.equal(handler.when.source, watcher.emits.source);
 });
 
-test("github-issues: the watcher's search is optional, and the rules use it to leave old issues alone", () => {
-  assert.doesNotMatch(watch(["owner/repo"]).asked, /--search/);
-  assert.match(watch(["owner/repo", "created:>=2026-11-04"]).asked, /--search created:>=2026-11-04/);
-  const { agents } = readRules("github-issues");
-  assert.ok(agents.watcher.command.some((part: string) => part.startsWith("created:>=")));
-});
+test(
+  "github-issues: the watcher's search is optional, and the rules use it to leave old issues alone",
+  NEEDS_JQ,
+  () => {
+    assert.doesNotMatch(watch(["owner/repo"]).asked, /--search/);
+    assert.match(watch(["owner/repo", "created:>=2026-11-04"]).asked, /--search created:>=2026-11-04/);
+    const { agents } = readRules("github-issues");
+    assert.ok(agents.watcher.command.some((part: string) => part.startsWith("created:>=")));
+  },
+);

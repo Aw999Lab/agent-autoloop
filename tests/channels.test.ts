@@ -106,19 +106,26 @@ else {
 test("feishu: sends once per card, updates in place, reports failure, and only real clicks count", async () => {
   const log = join(dir, "lark.log");
   const lark = join(dir, "lark-cli");
-  // A stand-in for lark-cli: records each call; `event consume` prints two clicks and waits to be stopped.
+  // A stand-in for lark-cli: records each call; `event consume` prints two clicks and waits to be stopped; a card that
+  // can't be sent is told to fail by the words in it.
   writeFileSync(
     lark,
-    `#!/bin/sh
-echo "$*" >> "${log}"
-case "$*" in
-  *"event consume"*)
-    echo '{"action_value":"{\\"card\\":5,\\"choice\\":1}","operator_id":"ou_me","message_id":"om_5"}'
-    echo '{"action_value":"{\\"other\\":1}","operator_id":"ou_me","message_id":"om_5"}'
-    exec sleep 30 ;;
-  *fail-me*) exit 1 ;;
-  *) cat > /dev/null; echo '{"ok":true,"data":{"message_id":"om_5"}}' ;;
-esac
+    `#!${process.execPath}
+const { appendFileSync } = require("node:fs");
+const args = process.argv.slice(2).join(" ");
+appendFileSync(${JSON.stringify(log)}, args + "\\n");
+if (args.includes("event consume")) {
+  console.log(JSON.stringify({ action_value: JSON.stringify({ card: 5, choice: 1 }), operator_id: "ou_me", message_id: "om_5" }));
+  console.log(JSON.stringify({ action_value: JSON.stringify({ other: 1 }), operator_id: "ou_me", message_id: "om_5" }));
+  setTimeout(() => {}, 30000);
+} else {
+  let body = "";
+  process.stdin.on("data", (chunk) => (body += chunk));
+  process.stdin.on("end", () => {
+    if (args.includes("+messages-send") && body.includes("fail-me")) process.exit(1);
+    console.log(JSON.stringify({ ok: true, data: { message_id: "om_5" } }));
+  });
+}
 `,
   );
   chmodSync(lark, 0o755);
@@ -149,14 +156,6 @@ esac
       return { changed: true };
     },
   };
-  // A card that can't be sent: lark-cli is told to fail by the words in it.
-  writeFileSync(
-    lark,
-    readFileSync(lark, "utf8").replace(
-      "*fail-me*) exit 1 ;;",
-      '*+messages-send*) body=$(cat); case "$body" in *fail-me*) exit 1 ;; esac; echo \'{"ok":true,"data":{"message_id":"om_5"}}\' ;;',
-    ),
-  );
   await feishu({ hub: hub as any, options: { user: "ou_me", lark }, log: () => {}, signal: stop.signal });
   const lines = readFileSync(log, "utf8").trim().split("\n");
   const sends = lines.filter((l) => l.includes("+messages-send"));

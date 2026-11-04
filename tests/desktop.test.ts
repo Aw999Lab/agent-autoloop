@@ -56,6 +56,8 @@ const base: Card = {
   link: null,
 };
 
+// The stand-ins are shell scripts named like the notifiers; on Windows the notifier is powershell.exe, checked below.
+const STAND_INS = { skip: process.platform === "win32" && "stand-in notifiers are shell scripts" };
 let fakes = 0;
 /** A folder that's all of PATH, with both notify commands doing `body` after writing down the arguments they got. */
 function standIns(body = "") {
@@ -115,9 +117,22 @@ test("it ships as a channel, and is told apart by platform", async () => {
   assert.equal(program, "osascript");
   assert.deepEqual(args.slice(args.indexOf("--")), ["--", TITLE, body("标题")]);
   assert.ok(args.includes("on run argv"));
+  // On Windows the words travel as base64 of JSON, the last argument: a script file never sees them as code.
+  for (const title of ["标题", `'; Remove-Item x; '`, "$(whoami)", "<text>markup</text>"]) {
+    const [shell, words] = notifyCommand(title, "win32");
+    assert.equal(shell, "powershell.exe");
+    const script = words[words.indexOf("-File") + 1];
+    assert.ok(existsSync(script), "toast.ps1 ships beside the channel");
+    assert.deepEqual(JSON.parse(Buffer.from(words.at(-1)!, "base64").toString("utf8")), {
+      title: TITLE,
+      body: body(title),
+    });
+    assert.equal(words.indexOf("-File"), words.length - 3, "nothing after the script but its one argument");
+    assert.ok(!words.slice(0, -1).join(" ").includes(title));
+  }
 });
 
-test("a new card notifies once with its title; an update only reports", async () => {
+test("a new card notifies once with its title; an update only reports", STAND_INS, async () => {
   const fake = standIns();
   const { reports } = await deliver([base, { ...base, version: 2, ref: "shown-5", state: "decided", choice: 1 }]);
   assert.equal(fake.calls().length, 1);
@@ -142,20 +157,24 @@ const hostile = [
   "--help",
 ];
 
-test("what an Agent wrote goes in as one argument after the options, and never into the script", async () => {
-  const fake = standIns();
-  const { reports } = await deliver(hostile.map((title, index) => ({ ...base, id: index + 1, title })));
-  assert.ok(reports.every(([what]) => what === "delivered"));
-  const calls = fake.calls();
-  assert.equal(calls.length, hostile.length);
-  const scriptOf = (call: string[]) => call.slice(0, call.indexOf("--"));
-  calls.forEach((call, index) => {
-    assert.deepEqual(call.slice(call.indexOf("--")), ["--", TITLE, body(hostile[index])]);
-    assert.deepEqual(scriptOf(call), scriptOf(calls[0]), "the script is the same whatever the card says");
-  });
-  assert.ok(!scriptOf(calls[0]).join("\n").includes("touch"));
-  assert.ok(!existsSync(marker));
-});
+test(
+  "what an Agent wrote goes in as one argument after the options, and never into the script",
+  STAND_INS,
+  async () => {
+    const fake = standIns();
+    const { reports } = await deliver(hostile.map((title, index) => ({ ...base, id: index + 1, title })));
+    assert.ok(reports.every(([what]) => what === "delivered"));
+    const calls = fake.calls();
+    assert.equal(calls.length, hostile.length);
+    const scriptOf = (call: string[]) => call.slice(0, call.indexOf("--"));
+    calls.forEach((call, index) => {
+      assert.deepEqual(call.slice(call.indexOf("--")), ["--", TITLE, body(hostile[index])]);
+      assert.deepEqual(scriptOf(call), scriptOf(calls[0]), "the script is the same whatever the card says");
+    });
+    assert.ok(!scriptOf(calls[0]).join("\n").includes("touch"));
+    assert.ok(!existsSync(marker));
+  },
+);
 
 test(
   "the real osascript reads them as words and runs none of them",
@@ -171,7 +190,26 @@ test(
   },
 );
 
-test("without a graphical session it quietly skips notification and keeps consuming cards", async () => {
+test("the real toast.ps1 reads them as words and runs none of them", { skip: process.platform !== "win32" }, () => {
+  const [, args] = notifyCommand("", "win32");
+  const script = args[args.indexOf("-File") + 1];
+  // The same script, but what it would show is printed instead.
+  const printing = join(dir, "toast-prints.ps1");
+  const lines = readFileSync(script, "utf8").split("\n");
+  const show = lines.findIndex((line) => line.includes(".Show("));
+  lines[show] = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; $texts.Item(1).InnerText";
+  writeFileSync(printing, "\ufeff" + lines.join("\n"));
+  const windowsHostile = [...hostile, `'; New-Item '${marker}'; '`, `"; New-Item "${marker}"; "`, "$(New-Item x)"];
+  for (const title of windowsHostile) {
+    const [shell, words] = notifyCommand(title, "win32");
+    words[words.indexOf("-File") + 1] = printing;
+    const printed = execFileSync(shell, words, { encoding: "utf8", windowsHide: true });
+    assert.equal(printed.replace(/\r?\n$/, "").replaceAll("\r\n", "\n"), body(title));
+  }
+  assert.ok(!existsSync(marker));
+});
+
+test("without a graphical session it quietly skips notification and keeps consuming cards", STAND_INS, async () => {
   mkdirSync(join(dir, "nothing-here"));
   process.env.PATH = join(dir, "nothing-here");
   delete process.env.DISPLAY;
@@ -184,12 +222,12 @@ test("without a graphical session it quietly skips notification and keeps consum
   assert.deepEqual(logged, []);
 });
 
-test("a notifier that fails is reported as not sent", async () => {
+test("a notifier that fails is reported as not sent", STAND_INS, async () => {
   standIns("exit 1");
   assert.deepEqual((await deliver([base])).reports, [["failed", 5, 1]]);
 });
 
-test("a title no program can be given is reported, and takes nothing down", async () => {
+test("a title no program can be given is reported, and takes nothing down", STAND_INS, async () => {
   const fake = standIns();
   const { reports } = await deliver([
     { ...base, title: "a\0b" },
@@ -202,7 +240,7 @@ test("a title no program can be given is reported, and takes nothing down", asyn
   assert.equal(fake.calls().length, 1);
 });
 
-test("a slow notifier doesn't freeze the process the hub runs in", async () => {
+test("a slow notifier doesn't freeze the process the hub runs in", STAND_INS, async () => {
   standIns("/bin/sleep 0.3");
   let ticks = 0;
   const ticker = setInterval(() => ticks++, 10);

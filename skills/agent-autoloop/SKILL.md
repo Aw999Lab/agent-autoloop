@@ -24,6 +24,7 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 { "name": "早报", "when": { "cron": "0 9 * * *" }, "to": "codex", "cwd": "~/notes", "prompt": "写今天的早报。" }
 ```
 
+- `cwd` 写目录的完整路径，以 `~/`、`/` 或盘符（如 `C:\Users\me\code`、`D:/work`）开头；在哪台电脑上跑，就按那台电脑的写法。
 - 同一个对象的事件要分开处理、互不等待，就写 `parallel`。
 - 默认的先问清单是 `askFirst`，用户说什么事必须先问他，就改这里。
 - 用户在别的地方定时跑的任务（Claude、Codex 应用里），写进 `elsewhere`，只在 `agent-autoloop status` 里列出来；它们要找用户时运行 `agent-autoloop tell <编号> --task <任务名>`，内容从标准输入传。

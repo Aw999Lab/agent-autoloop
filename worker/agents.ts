@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { loadPlugin } from "../host/plugins.ts";
+import { findOnPath, WINDOWS } from "../host/platform.ts";
 import type { Usage } from "../protocol/validate.ts";
 
 export type { Usage } from "../protocol/validate.ts";
@@ -47,20 +48,25 @@ export async function adapterFor(use: string): Promise<Adapter> {
 
 const found = new Map<string, string | null>();
 
+function onLoginPath(name: string) {
+  // Windows has no login shell to ask: what this program sees on PATH is what an agent will see.
+  if (WINDOWS) return findOnPath(name);
+  try {
+    const printed = execFileSync(process.env.SHELL ?? "/bin/sh", ["-lc", `command -v ${name}`], {
+      encoding: "utf8",
+      timeout: 15_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return printed.trim().split("\n").at(-1) || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Where a program is: on the login shell's PATH (launchd and systemd start with a bare one), or in one of these. */
 export function findProgram(name: string, elsewhere: () => string[] = () => []) {
   if (!found.has(name)) {
-    const shell = process.env.SHELL ?? "/bin/sh";
-    let onPath: string | null = null;
-    try {
-      const printed = execFileSync(shell, ["-lc", `command -v ${name}`], {
-        encoding: "utf8",
-        timeout: 15_000,
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      onPath = printed.trim().split("\n").at(-1) || null;
-    } catch {}
-    found.set(name, onPath ?? elsewhere().find(existsSync) ?? null);
+    found.set(name, onLoginPath(name) ?? elsewhere().find(existsSync) ?? null);
   }
   const program = found.get(name);
   if (!program) throw new Error(`找不到 ${name}：先装好并登录`);

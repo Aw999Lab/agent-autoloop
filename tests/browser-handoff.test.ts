@@ -42,25 +42,34 @@ process.exit(Number(process.env.BRIDGE_EXIT || 0));
   return { dir, task, run };
 }
 
-test("the standalone launcher passes one literal task, preserves evidence and resumes the supplied session", () => {
-  const { dir, run } = fixture();
-  const first = run();
-  assert.equal(first.status, 0, first.stderr);
-  assert.match(first.stdout, /页面证据/);
-  assert.ok(first.stdout.includes(session));
-  assert.equal(existsSync(join(dir, "SHOULD_NOT_EXIST")), false);
-  const again = run(["--resume", session]);
-  assert.equal(again.status, 0, again.stderr);
-  const calls: string[][] = readFileSync(join(dir, "called.jsonl"), "utf8")
-    .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line));
-  assert.equal(calls[0].length, 1);
-  assert.ok(calls[0][0].includes("$(touch SHOULD_NOT_EXIST)"));
-  assert.ok(calls[0][0].includes(new URL("https://example.com/页面").href));
-  assert.deepEqual(calls[1].slice(0, 2), ["--resume", session]);
-  assert.equal(calls[1].length, 3);
-});
+// The example recipes start their programs by name, as Mac and Linux do; on Windows a stand-in with #! is no program.
+const RECIPE_PROGRAMS = {
+  skip: process.platform === "win32" && "recipes start programs directly; Windows runs no #! stand-in",
+};
+
+test(
+  "the standalone launcher passes one literal task, preserves evidence and resumes the supplied session",
+  RECIPE_PROGRAMS,
+  () => {
+    const { dir, run } = fixture();
+    const first = run();
+    assert.equal(first.status, 0, first.stderr);
+    assert.match(first.stdout, /页面证据/);
+    assert.ok(first.stdout.includes(session));
+    assert.equal(existsSync(join(dir, "SHOULD_NOT_EXIST")), false);
+    const again = run(["--resume", session]);
+    assert.equal(again.status, 0, again.stderr);
+    const calls: string[][] = readFileSync(join(dir, "called.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.equal(calls[0].length, 1);
+    assert.ok(calls[0][0].includes("$(touch SHOULD_NOT_EXIST)"));
+    assert.ok(calls[0][0].includes(new URL("https://example.com/页面").href));
+    assert.deepEqual(calls[1].slice(0, 2), ["--resume", session]);
+    assert.equal(calls[1].length, 3);
+  },
+);
 
 test("invalid scope or resume arguments do not launch a browser", () => {
   const { dir, task, run } = fixture();
@@ -72,7 +81,7 @@ test("invalid scope or resume arguments do not launch a browser", () => {
   assert.equal(existsSync(join(dir, "called.jsonl")), false);
 });
 
-test("a failed bridge keeps its evidence and exit code, with no retry", () => {
+test("a failed bridge keeps its evidence and exit code, with no retry", RECIPE_PROGRAMS, () => {
   const { dir, run } = fixture();
   const failed = run([], 23);
   assert.equal(failed.status, 23);

@@ -24,8 +24,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
+import { after, test as nodeTest } from "node:test";
 
+// install.sh is the Mac and Linux installer; Windows has install.ps1, and install-windows.test.ts.
+const test = process.platform === "win32" ? nodeTest.skip : nodeTest;
 const repo = join(import.meta.dirname, "..");
 const script = join(repo, "install.sh");
 const dir = realpathSync(mkdtempSync(join(tmpdir(), "agent-autoloop-install-")));

@@ -4,6 +4,7 @@ import { existsSync, lstatSync, realpathSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { HOME } from "../host/home.ts";
+import { WINDOWS, windowsCommandIsOurs } from "../host/platform.ts";
 import { removeService, stopUp } from "../host/service.ts";
 
 const ROOT = path.join(import.meta.dirname, "..");
@@ -24,6 +25,15 @@ function removeLinks() {
   const onPath = (process.env.PATH ?? "").split(path.delimiter).filter((place) => path.isAbsolute(place));
   const places = [path.join(homedir(), ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin", ...onPath];
   for (const place of new Set(places)) removeLink(path.join(place, "agent-autoloop"), program);
+  // On Windows the command is a one-line .cmd install.ps1 wrote, not a link.
+  if (WINDOWS) {
+    for (const place of new Set([path.join(HOME, "bin"), ...onPath])) {
+      const command = path.join(place, "agent-autoloop.cmd");
+      if (!windowsCommandIsOurs(command, program)) continue;
+      rmSync(command);
+      console.log(`删掉了 ${command}`);
+    }
+  }
   const skill = path.join(ROOT, "skills", "agent-autoloop");
   for (const agent of [".claude", ".codex"]) removeLink(path.join(homedir(), agent, "skills", "agent-autoloop"), skill);
 }

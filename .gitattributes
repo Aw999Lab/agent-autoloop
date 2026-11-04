@@ -1,0 +1,3 @@
+# Every checkout has the line endings the repository has, Windows too: scripts, prettier and the tests read them.
+* text=auto eol=lf
+*.png binary

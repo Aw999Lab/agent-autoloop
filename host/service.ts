@@ -1,10 +1,12 @@
-// Keeping it running: launchd on a Mac, systemd on Linux. Both start it at login and restart it if it stops.
-import { execFileSync, spawnSync } from "node:child_process";
+// Keeping it running: launchd on a Mac, systemd on Linux, the user's Run key and keep-up.ts on Windows. Each starts it at
+// login and restarts it if it stops.
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { HOME } from "./home.ts";
+import { commandLine, pidExists, system32, WINDOWS } from "./platform.ts";
 
 const PROGRAM = path.join(import.meta.dirname, "..", "bin", "agent-autoloop.ts");
 /** Another install on this machine (another AGENT_AUTOLOOP_HOME) has a service of its own. */
@@ -59,9 +61,54 @@ const launchdHasIt = () =>
   spawnSync("launchctl", ["print", `${domain()}/${label()}`], { stdio: "ignore" }).status === 0;
 const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
+const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const KEEP_UP = path.join(import.meta.dirname, "keep-up.ts");
+const keepUpArgs = () => ["--disable-warning=ExperimentalWarning", KEEP_UP, HOME];
+const quote = (part: string) => `"${part}"`;
+
+/** What Windows runs at login: keep-up.ts, through a console host that shows no window. */
+export function runCommand() {
+  return [system32("conhost.exe"), "--headless", process.execPath, ...keepUpArgs()].map(quote).join(" ");
+}
+
+function runKeyValue() {
+  const found = spawnSync(system32("reg.exe"), ["query", RUN_KEY, "/v", label()], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  return found.status === 0 ? found.stdout : "";
+}
+
+/** The keeper of this install, if it is running. */
+function keeper() {
+  try {
+    const pid = Number(readFileSync(path.join(HOME, "keep-up.pid"), "utf8").trim());
+    return pidExists(pid) && commandLine(pid).includes("keep-up.ts") ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Only the keeper: what it started is stopped politely after, and the Agents that are running stay. */
+function stopKeeper() {
+  const pid = keeper();
+  if (pid === null) return;
+  try {
+    process.kill(pid);
+  } catch {}
+}
+
 export function installService() {
   mkdirSync(path.join(HOME, "logs"), { recursive: true, mode: 0o700 });
-  if (process.platform === "darwin") {
+  if (WINDOWS) {
+    execFileSync(system32("reg.exe"), ["add", RUN_KEY, "/v", label(), "/t", "REG_SZ", "/d", runCommand(), "/f"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    stopKeeper();
+    stopUp();
+    spawn(process.execPath, keepUpArgs(), { detached: true, stdio: "ignore", windowsHide: true }).unref();
+  } else if (process.platform === "darwin") {
     mkdirSync(path.dirname(plistFile()), { recursive: true });
     writeFileSync(plistFile(), plist());
     spawnSync("launchctl", ["bootout", `${domain()}/${label()}`], { stdio: "ignore" });
@@ -78,6 +125,12 @@ export function installService() {
 }
 
 export function removeService() {
+  if (WINDOWS) {
+    if (!runKeyValue().includes(KEEP_UP)) return;
+    spawnSync(system32("reg.exe"), ["delete", RUN_KEY, "/v", label(), "/f"], { stdio: "ignore", windowsHide: true });
+    stopKeeper();
+    return;
+  }
   const file = process.platform === "darwin" ? plistFile() : unitFile();
   if (!existsSync(file) || !readFileSync(file, "utf8").includes(xml(PROGRAM))) return;
   if (process.platform === "darwin") {
@@ -94,27 +147,37 @@ export function runningUp() {
   const file = path.join(HOME, "up.pid");
   if (!existsSync(file)) return null;
   const pid = readFileSync(file, "utf8").trim();
-  let command = "";
-  try {
-    command = execFileSync("ps", ["-p", pid, "-o", "command="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-  } catch {}
-  return /agent-autoloop(\.ts)? up\b/.test(command) ? Number(pid) : null;
+  // Windows quotes the program's path when it has a space in it.
+  return /agent-autoloop(\.ts)?"? up\b/.test(commandLine(pid)) ? Number(pid) : null;
 }
+
+/** Windows has no SIGTERM to catch: `up` looks for this file instead, and goes the same way. */
+export const stopFile = () => path.join(HOME, "up.stop");
 
 /** Stopping a service returns before its process is gone, and one started by hand has no service to stop it. */
 export function stopUp() {
   const pid = runningUp();
   if (pid === null) return;
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {}
-  for (let tries = 0; tries < 50 && runningUp() !== null; tries++) pause(100);
+  if (WINDOWS) writeFileSync(stopFile(), "");
+  else {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {}
+  }
+  // Asking Windows for a command line takes a while; that the number is still in use is enough here.
+  const going = () => (WINDOWS ? pidExists(pid) : runningUp() !== null);
+  for (let tries = 0; tries < 50 && going(); tries++) pause(100);
+  // One that didn't see the file in time is ended; Agents it started aren't part of it and keep going.
+  if (WINDOWS && pidExists(pid)) {
+    try {
+      process.kill(pid);
+    } catch {}
+  }
+  rmSync(stopFile(), { force: true });
 }
 
 export function serviceRunning() {
+  if (WINDOWS) return runKeyValue().includes(KEEP_UP) && keeper() !== null;
   if (process.platform === "darwin") return existsSync(plistFile()) && launchdHasIt();
   return spawnSync("systemctl", ["--user", "is-active", "--quiet", label()], { stdio: "ignore" }).status === 0;
 }

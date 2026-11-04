@@ -21,7 +21,7 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 
 const home = mkdtempSync(join(tmpdir(), "agent-autoloop-loop-"));
@@ -36,12 +36,20 @@ for (const name of ["osascript", "notify-send"]) {
   writeFileSync(join(notifiers, name), `#!/bin/sh\n${recordTitle}`);
   chmodSync(join(notifiers, name), 0o755);
 }
+const WINDOWS = process.platform === "win32";
+// On Windows the notifier is powershell.exe, which a test can only keep from showing a real toast by leaving it off PATH:
+// the card is then reported as not shown, and the rest of the loop is what is checked.
+const system = join(process.env.SystemRoot ?? "C:\\Windows", "System32");
 const env: NodeJS.ProcessEnv = {
   ...process.env,
   AGENT_AUTOLOOP_HOME: home,
   DISPLAY: ":99",
   PATH: `${notifiers}:${process.env.PATH}`,
 };
+if (WINDOWS) {
+  delete env.PATH;
+  env.Path = [dirname(process.execPath), system].join(";");
+}
 delete env.AGENT_AUTOLOOP_RULES;
 delete env.AGENT_AUTOLOOP_PUBLIC_URL;
 const cli = (...args: string[]) =>
@@ -61,10 +69,24 @@ const freePort = () =>
   });
 
 const fence = "```";
-const script = join(home, "agent.sh");
+const script = join(home, WINDOWS ? "agent.cjs" : "agent.sh");
+// The same agent for Windows, where there is no shell to write it in.
+const windowsAgent = `const fs = require("node:fs");
+const context = fs.readFileSync(process.env.AGENT_AUTOLOOP_CONTEXT, "utf8");
+const fence = "${fence}";
+const say = (text, receipt) => console.log(text + "\\n\\n" + fence + "agent-autoloop\\n" + JSON.stringify(receipt) + "\\n" + fence);
+if (context.includes("card.answered")) console.log("你选了绿色，做完了");
+else if (context.includes("hello.notice")) say("说了一声", { notice: [{ title: "留意一下", text: "磁盘快满了", key: "disk" }] });
+else {
+  fs.writeFileSync(${JSON.stringify(join(home, "where.txt"))}, process.cwd());
+  say("问了一个问题", { ask: [{ title: "试跑：选一个颜色", text: "选哪个都行", options: ["蓝色", "绿色"], recommend: 1, key: "color" }] });
+}
+`;
 writeFileSync(
   script,
-  `#!/bin/sh
+  WINDOWS
+    ? windowsAgent
+    : `#!/bin/sh
 # Asks on its first go; with an answer in the context file, finishes. Asked to, it only says something.
 if grep -q 'card.answered' "$AGENT_AUTOLOOP_CONTEXT"; then
   echo "你选了绿色，做完了"
@@ -99,9 +121,12 @@ after(async () => {
 
 test("one machine, one command: an event, a question, an answer, the work done", async () => {
   const port = await freePort();
-  const done = cli("init", "--no-service", "--command", script, "--port", String(port));
+  const done = cli("init", "--no-service", "--command", WINDOWS ? `node ${script}` : script, "--port", String(port));
   assert.equal(done.status, 0, done.stderr);
-  assert.equal(statSync(join(home, "config.json")).mode & 0o777, 0o600, "its keys are private");
+  // Windows has no file modes; there the keys are private by living in the user profile.
+  if (process.platform !== "win32") {
+    assert.equal(statSync(join(home, "config.json")).mode & 0o777, 0o600, "its keys are private");
+  }
   assert.equal(cli("init", "--no-service").status, 1, "a second init doesn't overwrite the first");
   assert.equal(cli("check").status, 0);
   // Point the starter rule at something this test owns.
@@ -133,8 +158,17 @@ test("one machine, one command: an event, a question, an answer, the work done",
   assert.match(emitted.stdout, /交给了：试一下/);
 
   const config = JSON.parse(readFileSync(join(home, "config.json"), "utf8"));
-  const state = async () =>
-    (await fetch(`${url}/v1/state`, { headers: { authorization: `Bearer ${config.owner}` } })).json();
+  // The commands below each take a while to start, and the hub closes a connection left idle for five seconds: a connection
+  // this test kept for the next look can be one that is just being closed, which is asked for again.
+  const state = async () => {
+    for (let tries = 0; ; tries++) {
+      try {
+        return await (await fetch(`${url}/v1/state`, { headers: { authorization: `Bearer ${config.owner}` } })).json();
+      } catch (error) {
+        if (tries >= 2) throw error;
+      }
+    }
+  };
   const until = async (done: (s: any) => boolean) => {
     for (let i = 0; i < 150; i++) {
       const now = await state();
@@ -163,11 +197,13 @@ test("one machine, one command: an event, a question, an answer, the work done",
   assert.equal(finished.recentCards[0].state, "done");
   assert.equal(finished.recentCards[0].result, "你选了绿色，做完了");
   assert.equal(finished.recentCards[0].by, "本人");
-  assert.deepEqual(
-    readFileSync(notified, "utf8").trim().split("\n"),
-    ["试跑：选一个颜色", "运行 agent-autoloop status 查看"],
-    "once, and not for the answer",
-  );
+  if (!WINDOWS) {
+    assert.deepEqual(
+      readFileSync(notified, "utf8").trim().split("\n"),
+      ["试跑：选一个颜色", "运行 agent-autoloop status 查看"],
+      "once, and not for the answer",
+    );
+  }
   assert.match(cli("answer", String(card.id), "1").stdout, /已经/);
 
   const status = cli("status");
@@ -203,7 +239,7 @@ test("the user's Agents are shown how to set it up, when this is the install in 
   mkdirSync(join(person, ".claude"));
   mkdirSync(join(person, ".codex", "skills", "agent-autoloop"), { recursive: true });
   writeFileSync(join(person, ".codex", "skills", "agent-autoloop", "SKILL.md"), "their own");
-  const usual: NodeJS.ProcessEnv = { ...env, HOME: person };
+  const usual: NodeJS.ProcessEnv = { ...env, HOME: person, USERPROFILE: person };
   delete usual.AGENT_AUTOLOOP_HOME;
   const done = spawnSync(
     process.execPath,

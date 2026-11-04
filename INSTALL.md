@@ -4,7 +4,7 @@
 
 ## 安装
 
-支持 macOS、Linux，暂不支持 Windows。需要 Node.js 24 或更新、Git、curl，以及一个已经登录的命令行 Agent。
+支持 macOS、Linux 和 Windows 10/11。需要 Node.js 24 或更新、Git（macOS 和 Linux 还要 curl），以及一个已经登录的命令行 Agent。Windows 见下面的 [Windows](#windows)。
 
 先检查 `node --version`。Homebrew 的 `node@24` 默认不进 PATH，装好后还要运行 `export PATH="$(brew --prefix node@24)/bin:$PATH"`；需要长期生效时再写入用户的 shell 配置。不要替用户登录，也不要读取或复制登录凭据。
 
@@ -31,6 +31,27 @@ AGENT_AUTOLOOP_REPO=/path/to/agent-autoloop sh /path/to/agent-autoloop/install.s
 安装器和中台启动时都会把数据目录设为 `0700`，包括已有目录，阻止其他系统用户读取数据库、事件和运行输出。升级后同步重启中台与接单程序；新版 `status` 使用中台提供的费用汇总。
 
 升级时若投影格式有变化，会自动从旧日志逐条重建，历史多时首次启动需要等待；之后正常启动直接复用投影。原日志和已有卡片链接保留，不需要手动迁移。
+
+## Windows
+
+在 PowerShell 里运行，不需要管理员权限：
+
+```powershell
+git clone --depth 1 https://github.com/KKKKhazix/agent-autoloop.git $env:TEMP\agent-autoloop-install
+powershell -ExecutionPolicy Bypass -File $env:TEMP\agent-autoloop-install\install.ps1 --agent codex
+```
+
+用本地仓库时先设 `$env:AGENT_AUTOLOOP_REPO = 'C:\path\to\agent-autoloop'`，再运行该目录里的 `install.ps1`；参数和上面一样，`--no-service`、`--port` 也照用。
+
+和 macOS、Linux 的不同：
+
+- 程序和数据同样在 `~\.agent-autoloop`。命令是 `~\.agent-autoloop\bin\agent-autoloop.cmd`，安装器把这个目录加进用户 PATH，新开的终端才生效。已有别的 `agent-autoloop.cmd` 时不覆盖，改用安装器打印的完整命令。
+- 常驻服务是当前用户的启动项（`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`），登录后经 `conhost --headless` 在后台启动 `host/keep-up.ts`，由它运行 `up`，停了 10 秒后再起。日志在 `~\.agent-autoloop\logs\up.log`。不用计划任务，因为登录触发的计划任务要管理员权限。
+- Windows 没有登录 shell，Agent 用的是启动它的程序看到的 PATH。npm 装的命令（`codex.cmd`、`lark-cli.cmd`）直接改用 node 运行它指向的脚本，不经过 `cmd.exe`，提示词只作参数传入。其他 `.cmd`、`.bat` 和 shell 脚本不能作为 Agent 或通道命令；`#!` 指向 node 的脚本可以。
+- 桌面通知用系统通知（PowerShell 发出），卡片内容以 base64 数据传给 `plugins/desktop/toast.ps1`，不拼进脚本。
+- Windows 没有进程组和 SIGTERM：停一轮 Agent 时结束它的整棵进程树，不先礼后兵；停中台时 `stopUp` 在数据目录写 `up.stop`，`up` 看到后正常退出，5 秒内没退才强制结束。
+- 文件权限 `0700`、`0600` 在 Windows 上不生效；数据目录在用户目录下，靠 Windows 的用户目录权限隔开其他用户。
+- 示例场景里直接按名字启动程序的脚本（浏览器交接、飞书周报的 `collect.ts`）仍按 macOS、Linux 写，Windows 上要把命令写成 `.exe` 或 `node 脚本`。
 
 ## 临时 HOME、CI 或没有服务管理器
 

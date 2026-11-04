@@ -1,12 +1,13 @@
 // Everything this machine does, in one process: the hub, the worker and its channels, whichever config.json says. They
 // speak the same protocol to each other here as they would across the world. A stop leaves agents running: they're
 // detached, and the worker finds them again when it's back.
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadChannel } from "./channels.ts";
 import { readConfig, type ChannelConfig } from "./config.ts";
 import { HOME } from "./home.ts";
-import { runningUp } from "./service.ts";
+import { WINDOWS } from "./platform.ts";
+import { runningUp, stopFile } from "./service.ts";
 import { commitOf } from "./version.ts";
 import { hubClient } from "../protocol/client.ts";
 import { createWorker } from "../worker/worker.ts";
@@ -91,5 +92,10 @@ export async function up() {
   };
   process.on("SIGTERM", finish);
   process.on("SIGINT", finish);
+  if (WINDOWS) {
+    // Nothing can send this process a SIGTERM on Windows; stopUp leaves a file instead.
+    rmSync(stopFile(), { force: true });
+    setInterval(() => existsSync(stopFile()) && finish(), 500).unref();
+  }
   await Promise.all(jobs);
 }

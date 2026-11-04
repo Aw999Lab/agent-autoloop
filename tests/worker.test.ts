@@ -17,8 +17,11 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test as nodeTest } from "node:test";
 import { setup } from "./helpers.ts";
+
+// Every agent here is a shell script; on Windows, worker-launch.test.ts runs node scripts through the same worker.
+const test = process.platform === "win32" ? nodeTest.skip : nodeTest;
 
 const home = setup("worker");
 const folder = join(home, "project");

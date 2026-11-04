@@ -22,7 +22,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
+import { after, test as nodeTest } from "node:test";
+
+// Built on Mac/Linux stand-ins (launchctl, systemctl, symlinks); uninstall-windows.test.ts is this on Windows.
+const test = process.platform === "win32" ? nodeTest.skip : nodeTest;
 
 const repo = join(import.meta.dirname, "..");
 const dir = realpathSync(mkdtempSync(join(tmpdir(), "agent-autoloop-uninstall-")));
@@ -61,6 +64,7 @@ function install() {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: person,
+    USERPROFILE: person,
     PATH: [standIns, join(person, ".local", "bin"), elsewhere, mine, theirs, dangling, "/usr/bin", "/bin"].join(":"),
   };
   for (const name of [

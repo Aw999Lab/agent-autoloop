@@ -8,6 +8,7 @@ import { createInterface } from "node:readline/promises";
 import { hubClient } from "../protocol/client.ts";
 import { CONFIG_FILE, readConfig, writeConfig, type Config } from "../host/config.ts";
 import { HOME, RULES_FILE } from "../host/home.ts";
+import { findOnPath, WINDOWS, windowsCommandIsOurs } from "../host/platform.ts";
 import { installService, removeService, serviceRunning } from "../host/service.ts";
 import { versionLine } from "../host/version.ts";
 import { spendLine } from "./spend.ts";
@@ -107,12 +108,18 @@ function linkSkill() {
     const link = path.join(homedir(), agent, "skills", "agent-autoloop");
     if (lstatSync(link, { throwIfNoEntry: false })) continue;
     mkdirSync(path.dirname(link), { recursive: true });
-    symlinkSync(path.join(ROOT, "skills", "agent-autoloop"), link);
+    // A junction is the link to a folder Windows lets anyone make; elsewhere the type is ignored.
+    symlinkSync(path.join(ROOT, "skills", "agent-autoloop"), link, "junction");
   }
 }
 
 /** What to type to run this program: its name if that's what a shell finds, otherwise where it is. */
 function howToRun() {
+  if (WINDOWS) {
+    const found = findOnPath("agent-autoloop");
+    if (found && windowsCommandIsOurs(found, PROGRAM)) return "agent-autoloop";
+    return `node --disable-warning=ExperimentalWarning "${PROGRAM}"`;
+  }
   const found = spawnSync("/bin/sh", ["-c", "command -v agent-autoloop"], { encoding: "utf8" }).stdout.trim();
   if (found && realpathSync(found) === realpathSync(PROGRAM)) return "agent-autoloop";
   return /\s/.test(PROGRAM) ? `'${PROGRAM}'` : PROGRAM;
@@ -501,8 +508,9 @@ function service(args: string[]) {
 function addPlugin(args: string[]) {
   const url = args[0] ?? fail("用法：agent-autoloop add <git 地址>");
   const name = url
-    .replace(/\/$/, "")
-    .split(/[/:]/)
+    // A local folder on Windows is C:\like\this.
+    .replace(/[\\/]$/, "")
+    .split(/[\\/:]/)
     .at(-1)!
     .replace(/\.git$/, "")
     .toLowerCase();

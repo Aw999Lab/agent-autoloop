@@ -3,6 +3,7 @@
 //   "channels": { "desktop": { "key": "…" } } in config.json
 //   "channels": { "desktop": { "name": "桌面通知" } } in rules.json
 import { execFile, spawnSync } from "node:child_process";
+import path from "node:path";
 import type { Card, ChannelContext } from "../../host/channels.ts";
 
 const WORDS = "运行 agent-autoloop status 查看";
@@ -16,10 +17,19 @@ const APPLESCRIPT = ["on run argv", "display notification (item 2 of argv) with 
 export function notifyCommand(title: string, platform: string = process.platform): [string, string[]] {
   const body = `${title}\n${WORDS}`;
   if (platform === "darwin") return ["osascript", [...APPLESCRIPT.flatMap((line) => ["-e", line]), "--", TITLE, body]];
+  if (platform === "win32") {
+    const payload = Buffer.from(JSON.stringify({ title: TITLE, body })).toString("base64");
+    const script = path.join(import.meta.dirname, "toast.ps1");
+    return [
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, payload],
+    ];
+  }
   return ["notify-send", ["--", TITLE, body]];
 }
 
 function hasDesktop() {
+  if (process.platform === "win32") return true;
   if (process.platform === "darwin") {
     return spawnSync("launchctl", ["print", `gui/${process.getuid!()}`], { stdio: "ignore" }).status === 0;
   }
@@ -30,7 +40,7 @@ function hasDesktop() {
 function show(title: string) {
   const [program, args] = notifyCommand(title);
   return new Promise<void>((resolve, reject) => {
-    execFile(program, args, { timeout: 30_000 }, (error) => (error ? reject(error) : resolve()));
+    execFile(program, args, { timeout: 30_000, windowsHide: true }, (error) => (error ? reject(error) : resolve()));
   });
 }
 

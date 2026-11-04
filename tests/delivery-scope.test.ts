@@ -53,7 +53,9 @@ test("release scope compares the entire healthy-live range and both sides of ren
   git("mv", "app.ts", "docs/app.md");
   assert.equal(releaseRequired(root, base, commit(), config.internal), true);
 });
-test("executable or symlink documents and unknown history always need release", () => {
+// Git on Windows records neither an executable bit nor a symlink a test can make, so there's no such change to look at.
+const GIT_MODES = { skip: process.platform === "win32" && "git on Windows keeps no executable bit or symlink" };
+test("executable or symlink documents and unknown history always need release", GIT_MODES, () => {
   for (const mode of ["executable", "symlink"]) {
     git("reset", "--hard", base);
     if (mode === "executable") chmodSync(join(root, "docs/a.md"), 0o755);
