@@ -105,7 +105,26 @@ test("a session's total goes after three months without use, and not before", ()
   const [gone] = readdirSync(totals);
   age(join(totals, gone), 91);
   saveUsage("printed", "still-in-use", { input: 1 });
+  const kept = readdirSync(totals).find((name) => name !== gone)!;
+  age(join(totals, kept), 89);
   worker.tidy();
-  assert.equal(existsSync(join(totals, gone)), false);
-  assert.equal(readdirSync(totals).length, 1);
+  assert.deepEqual(readdirSync(totals), [kept]);
 });
+
+test(
+  "session totals that can't be cleared are said once and don't stop the worker",
+  { skip: process.getuid!() === 0 },
+  () => {
+    const lines: string[] = [];
+    const worker = createWorker({ hub: quiet() as any, name: "w1", wait: 0, log: (line) => lines.push(line) });
+    mkdirSync(totals, { recursive: true });
+    chmodSync(totals, 0o000);
+    try {
+      assert.doesNotThrow(() => worker.tidy());
+      worker.tidy();
+      assert.equal(lines.filter((line) => line.includes("session totals")).length, 1);
+    } finally {
+      chmodSync(totals, 0o700);
+    }
+  },
+);

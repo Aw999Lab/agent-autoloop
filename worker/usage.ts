@@ -1,7 +1,16 @@
 // A session's running total isn't what a launch used; how far the total rose during the launch is. The launch keeps
 // where the total stood when it began, because a worker that stops after moving this file on reads that launch again.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  lstatSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { HOME } from "../host/home.ts";
 import type { Usage } from "./agents.ts";
@@ -38,7 +47,8 @@ export function forgetOldUsage(moment: number) {
   if (!existsSync(DIRECTORY)) return;
   for (const name of readdirSync(DIRECTORY)) {
     const target = path.join(DIRECTORY, name);
-    if (moment - statSync(target).mtimeMs > KEEP_DAYS * 24 * 3600_000) rmSync(target, { force: true });
+    if (moment - lstatSync(target).mtimeMs > KEEP_DAYS * 24 * 3600_000)
+      rmSync(target, { recursive: true, force: true });
   }
 }
 
