@@ -1,8 +1,9 @@
 // What someone installing or updating gets. Failure cases: they get main as it stands, checked or not, instead of the newest
 // release; version numbers sort as text, so v1.9.0 beats v1.10.0; a tag that isn't a release is taken for one; an install
 // made before releases, sitting on main, is left there; a copy from a repository given by hand is sent to tags it was never
-// asked to follow; a failed look at the releases counts as being up to date, or an update with nothing new restarts the
-// service. No network: git's own insteadOf points the public address at a repository made here.
+// asked to follow; a failed look at the releases counts as being up to date or as there being none, which would install main,
+// or an update with nothing new restarts the service. No network: git's own insteadOf points the public address at a
+// repository made here.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
@@ -109,7 +110,7 @@ test("a failed look at the releases is a failure, not news that nothing changed"
  * install.sh as someone runs it: its `git` is real, and the program it sets up only says it was run. PATH is folders of this
  * test's own and nothing else, because the script puts its command in the first one it can write to.
  */
-function install(person: string, env: NodeJS.ProcessEnv = {}, ...args: string[]) {
+function runInstaller(person: string, env: NodeJS.ProcessEnv = {}) {
   const ran = join(person, "ran");
   const bin = join(person, "bin");
   const tools = join(person, "tools");
@@ -119,7 +120,7 @@ function install(person: string, env: NodeJS.ProcessEnv = {}, ...args: string[])
   for (const name of ["git", "node", "mkdir", "ln", "cat", "chmod", "sed", "sort", "tail"]) {
     if (!existsSync(join(tools, name))) symlinkSync(found(name), join(tools, name));
   }
-  const done = spawnSync("/bin/sh", [script, "--no-service", ...args], {
+  return spawnSync("/bin/sh", [script, "--no-service"], {
     env: {
       GIT_CONFIG_GLOBAL: gitConfig,
       GIT_CONFIG_SYSTEM: "/dev/null",
@@ -131,8 +132,12 @@ function install(person: string, env: NodeJS.ProcessEnv = {}, ...args: string[])
     },
     encoding: "utf8",
   });
+}
+
+function install(person: string, env: NodeJS.ProcessEnv = {}) {
+  const done = runInstaller(person, env);
   assert.equal(done.status, 0, done.stderr);
-  return { app: join(person, "hub", "app"), said: () => readFileSync(ran, "utf8"), out: done.stdout };
+  return { app: join(person, "hub", "app"), said: () => readFileSync(join(person, "ran"), "utf8"), out: done.stdout };
 }
 
 test("the installer installs the newest release, and running it again moves on to a newer one", () => {
@@ -156,4 +161,16 @@ test("a repository given to the installer by hand is installed as it stands", ()
   const expected = at(original);
   const it = install(person, { AGENT_AUTOLOOP_REPO: `file://${original}` });
   assert.equal(at(it.app), expected);
+});
+
+test("the installer stops when it can't look at the releases, rather than installing main", () => {
+  const person = join(dir, "no-look");
+  mkdirSync(join(person, "tools"), { recursive: true });
+  const real = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const git = join(person, "tools", "git");
+  writeFileSync(git, `#!/bin/sh\n[ "$1" = ls-remote ] && exit 128\nexec "${real}" "$@"\n`);
+  chmodSync(git, 0o755);
+  const done = runInstaller(person);
+  assert.notEqual(done.status, 0);
+  assert.equal(existsSync(join(person, "hub", "app")), false);
 });

@@ -31,7 +31,9 @@ chmod 700 "$ROOT"
 # The newest release, which has passed every check. A repository given by hand is used as it stands.
 release=""
 if [ -z "${AGENT_AUTOLOOP_REPO:-}" ]; then
-  release=$(git ls-remote --refs --tags "$REPO" 'v*' | sed -n 's#.*refs/tags/\(v[0-9]*\.[0-9]*\.[0-9]*\)$#\1#p' |
+  # On a line of its own: in a pipe, not getting an answer would look like there being no releases.
+  tags=$(git ls-remote --refs --tags "$REPO" 'v*')
+  release=$(printf '%s\n' "$tags" | sed -n 's#.*refs/tags/\(v[0-9]*\.[0-9]*\.[0-9]*\)$#\1#p' |
     sort -t. -k1.2,1n -k2,2n -k3,3n | tail -n 1)
 fi
 if [ ! -d "$APP/.git" ]; then
