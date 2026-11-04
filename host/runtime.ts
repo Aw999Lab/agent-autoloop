@@ -8,7 +8,7 @@ import { HOME, RULES_FILE } from "./home.ts";
 import { credential, digest, whose as keyHolder } from "../kernel/credentials.ts";
 import { decide } from "../kernel/decide.ts";
 import { AuthError, NotFound } from "../kernel/errors.ts";
-import { evolve, rows, keyOf, statement, type Fact, type Row, type Table } from "../kernel/evolve.ts";
+import { evolve, rows, keyOf, statement, STORED_FORMAT, type Fact, type Row, type Table } from "../kernel/evolve.ts";
 import * as query from "../kernel/query.ts";
 import { eventRule, typeMatches } from "../kernel/rules.ts";
 import { stateOf as state } from "../kernel/state.ts";
@@ -47,7 +47,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS projections(collection TEXT, key TEXT, data TEXT NOT NULL, PRIMARY KEY(collection, key));
 `);
 db.function("card_token", { deterministic: true }, (id, at) => credential(environment, "card", id, at));
-db.function("card_hash", { deterministic: true }, (id, at) => digest(credential(environment, "card", id, at)));
+const cardHash = (id: unknown, at: unknown) => digest(credential(environment, "card", id, at));
+db.function("card_hash", { deterministic: true }, (id, at) => cardHash(id, at));
 
 const schema = readFileSync(new URL("../kernel/schema.sql", import.meta.url), "utf8");
 const views: string[] = [];
@@ -66,16 +67,16 @@ for (const [, table, body] of schema.matchAll(/CREATE TABLE (\w+) \(([\s\S]*?)\n
 // Other processes must see either the old views or the new ones, never the gap between DROP and CREATE.
 db.exec(`BEGIN IMMEDIATE; ${views.join(";")}; COMMIT`);
 
-// The persisted projection is expendable; the log alone rebuilds it.
+const CARD_HASH_INDEX =
+  "CREATE INDEX IF NOT EXISTS projection_card_hash ON projections(card_hash(json_extract(data,'$.id'),json_extract(data,'$.created_at'))) WHERE collection='cards'";
+
+// The persisted projection is expendable; the log alone rebuilds it, which an upgrade has to wait for. So only what decides
+// what's stored counts here. The views above are made anew at every start and need no rebuild.
 const format = digest(
-  ["../kernel/evolve.ts", "../kernel/schema.sql", "../kernel/credentials.ts", "./runtime.ts"]
-    .map((file) => readFileSync(new URL(file, import.meta.url), "utf8"))
-    .join("\n") + digest(environment.secret),
+  [STORED_FORMAT, credential, digest, cardHash, CARD_HASH_INDEX, digest(environment.secret)].map(String).join("\n"),
 );
 let current = openView(db, format);
-db.exec(
-  "CREATE INDEX IF NOT EXISTS projection_card_hash ON projections(card_hash(json_extract(data,'$.id'),json_extract(data,'$.created_at'))) WHERE collection='cards'",
-);
+db.exec(CARD_HASH_INDEX);
 
 export const all = <T>(sql: string, params: SQLInputValue[] = []) =>
   db

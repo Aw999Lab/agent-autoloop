@@ -257,3 +257,7 @@ export function snapshot(view: View) {
 export const rows = (view: View, table: Table, match: Match = {}, limit?: number, reverse = false) =>
   view.select(table, match, limit, reverse);
 export const iso = (ms: number) => new Date(ms).toISOString();
+/** What decides how facts are stored. Only a change to this needs the projection rebuilt, not one to code that reads it. */
+export const STORED_FORMAT = [initialize, indexProjection, evolve, keyOf, JSON.stringify(indexes)]
+  .map(String)
+  .join("\n");
