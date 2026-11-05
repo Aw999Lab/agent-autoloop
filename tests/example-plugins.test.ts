@@ -289,13 +289,16 @@ async function runBlock(heading: string, oldPort: number) {
   return { code, out };
 }
 
-test("the tutorial's first block runs all three examples as written", async () => {
+// The tutorial's blocks are shell, and a reader on Windows can't paste them as they are; install.ps1 is the Windows path.
+const TUTORIAL_SHELL = { skip: process.platform === "win32" && "the tutorial's blocks are shell" };
+
+test("the tutorial's first block runs all three examples as written", TUTORIAL_SHELL, async () => {
   const { code, out } = await runBlock("先跑起来", 3399);
   assert.equal(code, 0, out);
   assert.match(out, /agent-autoloop add from a git repository/);
 });
 
-test("the tutorial's conformance block passes as written", async () => {
+test("the tutorial's conformance block passes as written", TUTORIAL_SHELL, async () => {
   const { code, out } = await runBlock("一致性测试", 3398);
   assert.equal(code, 0, out);
   assert.match(out, /pass [1-9]/);
