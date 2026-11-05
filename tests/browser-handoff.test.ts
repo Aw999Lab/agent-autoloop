@@ -10,11 +10,13 @@ import { after, test } from "node:test";
 const root = mkdtempSync(join(tmpdir(), "autoloop-browser-template-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 const session = "12345678-1234-1234-1234-123456789abc";
+const WINDOWS = process.platform === "win32";
 
 function fixture() {
   const dir = mkdtempSync(join(root, "case-"));
   copyFileSync(join(import.meta.dirname, "../examples/recipes/browser-handoff/handoff.ts"), join(dir, "handoff.ts"));
-  const command = join(dir, "browser entry");
+  // Windows runs no #! script: there the entry is written as node and its script, as the README says to configure it.
+  const command = join(dir, WINDOWS ? "browser entry.mjs" : "browser entry");
   writeFileSync(
     command,
     `#!${process.execPath}
@@ -27,7 +29,7 @@ process.exit(Number(process.env.BRIDGE_EXIT || 0));
     { mode: 0o755 },
   );
   const task = {
-    command: [command],
+    command: WINDOWS ? [process.execPath, command] : [command],
     url: "https://example.com/页面",
     checks: ["核实标题", "保留字面量 $(touch SHOULD_NOT_EXIST) 和 `echo x`"],
     allowedActions: ["只读页面", "仅关闭本次新建的标签"],
@@ -42,14 +44,8 @@ process.exit(Number(process.env.BRIDGE_EXIT || 0));
   return { dir, task, run };
 }
 
-// The example recipes start their programs by name, as Mac and Linux do; on Windows a stand-in with #! is no program.
-const RECIPE_PROGRAMS = {
-  skip: process.platform === "win32" && "recipes start programs directly; Windows runs no #! stand-in",
-};
-
 test(
   "the standalone launcher passes one literal task, preserves evidence and resumes the supplied session",
-  RECIPE_PROGRAMS,
   () => {
     const { dir, run } = fixture();
     const first = run();
@@ -81,7 +77,7 @@ test("invalid scope or resume arguments do not launch a browser", () => {
   assert.equal(existsSync(join(dir, "called.jsonl")), false);
 });
 
-test("a failed bridge keeps its evidence and exit code, with no retry", RECIPE_PROGRAMS, () => {
+test("a failed bridge keeps its evidence and exit code, with no retry", () => {
   const { dir, run } = fixture();
   const failed = run([], 23);
   assert.equal(failed.status, 23);

@@ -60,6 +60,8 @@ test("feishu CLI calls leave the HTTP loop available", async () => {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const lark = join(dir, "async-lark");
+  // A call that held the loop would never see its request answered: the stand-in gives up and the send fails, however long
+  // it waits. The wait only has to outlast a slow answer on a busy machine, where two seconds was seen not to be enough.
   writeFileSync(
     lark,
     `#!${process.execPath}
@@ -67,7 +69,7 @@ if (process.argv[2] === 'event') { setInterval(() => {}, 1000); }
 else {
   (async () => {
     if (process.argv[2] !== 'auth') for await (const chunk of process.stdin) {}
-    await fetch(${JSON.stringify(url)}, { signal: AbortSignal.timeout(2000) });
+    await fetch(${JSON.stringify(url)}, { signal: AbortSignal.timeout(10_000) });
     console.log(JSON.stringify({ ok: true, identities: { user: { openId: 'ou_me' } }, data: { message_id: 'om_5' } }));
   })().catch(() => process.exit(1));
 }

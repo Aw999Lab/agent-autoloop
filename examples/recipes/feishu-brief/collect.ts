@@ -1,8 +1,8 @@
 // Keep Feishu credentials in its CLI; only complete, reader-scoped snapshots can wake the summarizer.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 
 type Report = {
   task_id: string;
@@ -15,8 +15,24 @@ type Table = { name: string; baseToken: string; tableId: string; fields: string[
 type Sources = { reportRule: string; reportUsers: string[]; tables: Table[] };
 class AuthorizationError extends Error {}
 
+/**
+ * On Windows npm installs lark-cli as a .cmd, which only a shell can start, and a shell would read the arguments as
+ * commands: so run the script the .cmd points to. This file is copied out of the repository, so it carries its own copy.
+ */
+function larkCli(): [string, string[]] {
+  if (process.platform === "win32") {
+    for (const place of (process.env.PATH ?? "").split(delimiter)) {
+      const shim = join(place, "lark-cli.cmd");
+      const script = existsSync(shim) && /"%dp0%\\([^"]+\.[cm]?js)"/i.exec(readFileSync(shim, "utf8"))?.[1];
+      if (script) return [process.execPath, [join(place, script)]];
+    }
+  }
+  return ["lark-cli", []];
+}
+
 function lark(args: string[]) {
-  const run = spawnSync("lark-cli", [...args, "--as", "user"], {
+  const [program, front] = larkCli();
+  const run = spawnSync(program, [...front, ...args, "--as", "user"], {
     encoding: "utf8",
     timeout: 60_000,
     maxBuffer: 16 * 1024 * 1024,

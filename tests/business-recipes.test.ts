@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { after, test } from "node:test";
 import { probe, receipt } from "../examples/recipes/website-watch/check.ts";
 import { readMessage, resultFrom } from "../worker/contract.ts";
@@ -15,10 +15,7 @@ after(() => rmSync(scratch, { recursive: true, force: true }));
 const target = { id: "site", name: "示例网站", url: "https://example.com/health", contains: '"ok":true' };
 const empty = { events: [{ id: "tick-1" }], open: [] };
 
-// The example recipes start their programs by name, as Mac and Linux do; on Windows a stand-in with #! is no program.
-const RECIPE_PROGRAMS = {
-  skip: process.platform === "win32" && "recipes start programs directly; Windows runs no #! stand-in",
-};
+const WINDOWS = process.platform === "win32";
 
 test("website checks status and body without following redirects, and records transport failures", async () => {
   const response = (status: number, body: string) =>
@@ -74,7 +71,11 @@ test("a Chinese health URL remains a valid event link in the worker receipt", ()
 
 function collect(mode = "ok") {
   const dir = mkdtempSync(join(scratch, "brief-"));
-  const cli = join(dir, "lark-cli");
+  // On Windows lark-cli is what npm installs there: a .cmd pointing at a script, which the recipe has to find and run.
+  const cli = join(dir, WINDOWS ? "lark.mjs" : "lark-cli");
+  if (WINDOWS) {
+    writeFileSync(join(dir, "lark-cli.cmd"), '@SETLOCAL\r\n@SET dp0=%~dp0\r\n@node "%dp0%\\lark.mjs" %*\r\n');
+  }
   writeFileSync(
     cli,
     `#!${process.execPath}
@@ -118,21 +119,20 @@ console.log(JSON.stringify({ok:true,identity:'user',data}));
   );
   writeFileSync(join(dir, "context.json"), JSON.stringify({ answers: [], open: [], events: [] }));
   writeFileSync(join(dir, "weekly-input.json"), '{"id":"old","reports":["old data"]}');
+  // Windows spells the variable Path, and two spellings in one environment would leave it to chance which one is used.
+  const env: NodeJS.ProcessEnv = { AGENT_AUTOLOOP_CONTEXT: join(dir, "context.json") };
+  for (const [name, value] of Object.entries(process.env)) if (!/^path$/i.test(name)) env[name] = value;
+  env.PATH = [dir, process.env.PATH].join(delimiter);
   const run = spawnSync(
     process.execPath,
     [join(import.meta.dirname, "../examples/recipes/feishu-brief/collect.ts"), "sources.json"],
-    {
-      cwd: dir,
-      encoding: "utf8",
-      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, AGENT_AUTOLOOP_CONTEXT: join(dir, "context.json") },
-    },
+    { cwd: dir, encoding: "utf8", env },
   );
   return { dir, run, parsed: resultFrom(readMessage(run.stdout), {}) };
 }
 
 test(
   "Feishu collection uses the reader, filters reports and fields, and consumes all table pages",
-  RECIPE_PROGRAMS,
   () => {
     const { dir, run, parsed } = collect();
     assert.equal(run.status, 0, run.stderr);
@@ -159,7 +159,6 @@ test(
 
 test(
   "Feishu authorization failure asks once and never publishes the old snapshot or CLI details",
-  RECIPE_PROGRAMS,
   () => {
     const { dir, run, parsed } = collect("auth");
     assert.equal(run.status, 0, run.stderr);
